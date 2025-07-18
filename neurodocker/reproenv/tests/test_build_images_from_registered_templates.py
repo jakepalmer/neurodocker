@@ -1,18 +1,18 @@
 # TODO: add more tests for `from_dict` method.
 
 from pathlib import Path
-import typing as ty
+from typing import cast
 
 import pytest
 
-from neurodocker.reproenv.renderers import DockerRenderer
-from neurodocker.reproenv.renderers import SingularityRenderer
+from neurodocker.reproenv.renderers import DockerRenderer, SingularityRenderer
 from neurodocker.reproenv.state import _TemplateRegistry
-from neurodocker.reproenv.tests.utils import get_build_and_run_fns
-from neurodocker.reproenv.tests.utils import skip_if_no_docker
-from neurodocker.reproenv.tests.utils import skip_if_no_singularity
-from neurodocker.reproenv.types import installation_methods_type
-from neurodocker.reproenv.types import pkg_managers_type
+from neurodocker.reproenv.tests.utils import (
+    get_build_and_run_fns,
+    skip_if_no_docker,
+    skip_if_no_singularity,
+)
+from neurodocker.reproenv.types import installation_methods_type, pkg_managers_type
 
 _template_filepath = Path(__file__).parent / "sample-template-jq.yaml"
 
@@ -26,7 +26,8 @@ _template_filepath = Path(__file__).parent / "sample-template-jq.yaml"
     ],
 )
 @pytest.mark.parametrize(
-    ["pkg_manager", "base_image"], [("apt", "debian:buster-slim"), ("yum", "fedora:33")]
+    ["pkg_manager", "base_image"],
+    [("apt", "debian:bullseye-slim"), ("yum", "fedora:40")],
 )
 @pytest.mark.parametrize(
     ["jq_version", "jq_version_output", "fd_version_startswith"],
@@ -81,12 +82,13 @@ def test_build_using_renderer_from_dict(
     ],
 )
 @pytest.mark.parametrize(
-    ["pkg_manager", "base_image"], [("apt", "debian:buster-slim"), ("yum", "fedora:33")]
+    ["pkg_manager", "base_image"],
+    [("apt", "debian:bullseye-slim"), ("yum", "fedora:40")],
 )
 @pytest.mark.parametrize(["method"], [("binaries",), ("source",)])
 @pytest.mark.parametrize(
     ["jq_version", "jq_version_output", "fd_version_startswith"],
-    [("1.6", "jq-1.6", "fd"), ("1.5", "jq-1.5", "fd")],
+    [("1.6", "jq-1.6", "fd"), ("1.7", "jq-1.7", "fd")],
 )
 def test_build_using_renderer_instance_methods(
     cmd: str,
@@ -101,8 +103,8 @@ def test_build_using_renderer_instance_methods(
     _TemplateRegistry._reset()
     _TemplateRegistry.register(_template_filepath)
 
-    pkg_manager = ty.cast(pkg_managers_type, pkg_manager)
-    method = ty.cast(installation_methods_type, method)
+    pkg_manager = cast(pkg_managers_type, pkg_manager)
+    method = cast(installation_methods_type, method)
 
     fd_exe = "fdfind" if pkg_manager == "apt" else "fd"
 
@@ -118,10 +120,7 @@ def test_build_using_renderer_instance_methods(
         stdout, _ = run_fn(img, args=["jq", "--help"])
         assert stdout.startswith("jq - commandline JSON processor")
         stdout, _ = run_fn(img, args=["jq", "--version"])
-        if method == "source" and jq_version == "1.5":
-            assert stdout == "jq-"
-        else:
-            assert stdout == jq_version_output
+        assert stdout == jq_version_output
         # Test that deb was installed
         if method == "binaries":
             stdout, _ = run_fn(img, args=[fd_exe, "--version"])

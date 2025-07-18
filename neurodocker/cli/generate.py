@@ -5,20 +5,26 @@
 
 # TODO: add a dedicated class for key=value in the eat-all class.
 
+from __future__ import annotations
+
 import json as json_lib
-from pathlib import Path
 import sys
-import typing as ty
+from pathlib import Path
+from typing import IO, Any, Optional, Type, cast
 
 import click
 
-from neurodocker.reproenv.renderers import _Renderer
-from neurodocker.reproenv.renderers import DockerRenderer
-from neurodocker.reproenv.renderers import SingularityRenderer
-from neurodocker.reproenv.state import get_template
-from neurodocker.reproenv.state import register_template
-from neurodocker.reproenv.state import registered_templates
-from neurodocker.reproenv.state import registered_templates_items
+from neurodocker.reproenv.renderers import (
+    DockerRenderer,
+    SingularityRenderer,
+    _Renderer,
+)
+from neurodocker.reproenv.state import (
+    get_template,
+    register_template,
+    registered_templates,
+    registered_templates_items,
+)
 from neurodocker.reproenv.template import Template
 from neurodocker.reproenv.types import allowed_pkg_managers
 
@@ -44,15 +50,15 @@ class GroupAddCommonParamsAndRegisteredTemplates(click.Group):
             )
         ]
 
-    def get_command(self, ctx: click.Context, name: str) -> ty.Optional[click.Command]:
+    def get_command(self, ctx: click.Context, name: str) -> Optional[click.Command]:
         command = self.commands.get(name)
         if command is None:
             return command  # return immediately to error can be logged
 
         # This is only set if a subcommand is called. Calling --help on the group
         # does not set --template-path.
-        template_path: ty.Tuple[str] = ctx.params.get("template_path", tuple())
-        yamls: ty.List[Path] = []
+        template_path: tuple[str] = ctx.params.get("template_path", tuple())
+        yamls: list[Path] = []
         for p in template_path:
             path = Path(p)
             for pattern in ("*.yaml", "*.yml"):
@@ -61,7 +67,7 @@ class GroupAddCommonParamsAndRegisteredTemplates(click.Group):
         for path in yamls:
             _ = register_template(path)
 
-        params: ty.List[click.Parameter] = [
+        params: list[click.Parameter] = [
             click.Option(
                 ["-p", "--pkg-manager"],
                 type=click.Choice(list(allowed_pkg_managers), case_sensitive=False),
@@ -82,11 +88,11 @@ class OrderedParamsCommand(click.Command):
     parameters.
     """
 
-    def parse_args(self, ctx: click.Context, args: ty.List[str]):
-        self._options: ty.List[ty.Tuple[click.Parameter, ty.Any]] = []
+    def parse_args(self, ctx: click.Context, args: list[str]):
+        self._options: list[tuple[click.Parameter, Any]] = []
         # run the parser for ourselves to preserve the passed order
         parser = self.make_parser(ctx)
-        param_order: ty.List[click.Parameter]
+        param_order: list[click.Parameter]
         opts, _, param_order = parser.parse_args(args=list(args))
         for param in param_order:
             # We need the parameter name... so if it's None, let's panic.
@@ -182,8 +188,8 @@ class KeyValuePair(click.ParamType):
             return fn(value)
 
 
-def _get_common_renderer_params() -> ty.List[click.Parameter]:
-    params: ty.List[click.Parameter] = [
+def _get_common_renderer_params() -> list[click.Parameter]:
+    params: list[click.Parameter] = [
         click.Option(
             ["-p", "--pkg-manager"],
             type=click.Choice(list(allowed_pkg_managers), case_sensitive=False),
@@ -210,6 +216,15 @@ def _get_common_renderer_params() -> ty.List[click.Parameter]:
             help=(
                 "Copy files into the container. Provide at least two paths."
                 " The last path is always the destination path in the container."
+            ),
+        ),
+        OptionEatAll(
+            ["--add"],
+            multiple=True,
+            type=tuple,
+            help=(
+                "Extract a tar file as a layer in the container."
+                " Provide a source and destination path."
             ),
         ),
         OptionEatAll(
@@ -286,12 +301,14 @@ def _create_help_for_template(template: Template) -> str:
     return h
 
 
-def _get_params_for_registered_templates() -> ty.List[click.Parameter]:
+def _get_params_for_registered_templates() -> list[click.Parameter]:
     """Return list of click parameters for registered templates."""
-    params: ty.List[click.Parameter] = []
+    params: list[click.Parameter] = []
     names_tmpls = list(registered_templates_items())
     names_tmpls.sort(key=lambda r: r[0])  # sort by name
     for name, tmpl in names_tmpls:
+        if name.startswith("_"):  # Templates starting with _ are private
+            continue
         hlp = _create_help_for_template(Template(tmpl))
         param = OptionEatAll(
             [f"--{name.lower()}"], type=KeyValuePair(), multiple=True, help=hlp
@@ -304,7 +321,7 @@ def _params_to_renderer_dict(ctx: click.Context, pkg_manager) -> dict:
     """Return dictionary compatible with compatible with `_Renderer.from_dict()`."""
     renderer_dict = {"pkg_manager": pkg_manager, "instructions": []}
     cmd = ctx.command
-    cmd = ty.cast(OrderedParamsCommand, cmd)
+    cmd = cast(OrderedParamsCommand, cmd)
     for param, value in cmd._options:
         d = _get_instruction_for_param(ctx=ctx, param=param, value=value)
         # TODO: what happens if `d is None`?
@@ -315,9 +332,7 @@ def _params_to_renderer_dict(ctx: click.Context, pkg_manager) -> dict:
     return renderer_dict
 
 
-def _get_instruction_for_param(
-    ctx: click.Context, param: click.Parameter, value: ty.Any
-):
+def _get_instruction_for_param(ctx: click.Context, param: click.Parameter, value: Any):
     # TODO: clean this up.
     d = None
     if param.name == "from_":
@@ -336,6 +351,14 @@ def _get_instruction_for_param(
             raise click.ClickException("expected at least two values for --copy")
         source, destination = list(value[:-1]), value[-1]
         d = {"name": param.name, "kwds": {"source": source, "destination": destination}}
+    # add
+    elif param.name == "add":
+        if not isinstance(value, tuple):
+            raise ValueError("expected this value to be a tuple (contact developers)")
+        if len(value) < 2:
+            raise click.ClickException("expected at least two values for --add")
+        source, destination = value
+        d = {"name": param.name, "kwds": {"source": source, "destination": destination}}
     # env
     elif param.name == "env":
         value = dict(value)
@@ -344,8 +367,10 @@ def _get_instruction_for_param(
     elif param.name == "entrypoint":
         if not isinstance(value, tuple):
             raise ValueError("expected this value to be a tuple (contact developers)")
-        value = list(value)  # convert from tuple to list
-        d = {"name": param.name, "kwds": {"args": value}}
+        value_spl = []
+        for el in value:
+            value_spl += el.split()
+        d = {"name": param.name, "kwds": {"args": value_spl}}
     # install
     elif param.name == "install":
         opts = None
@@ -409,12 +434,24 @@ def generate(*, template_path):
 
 
 def _base_generate(
-    ctx: click.Context, renderer: ty.Type[_Renderer], pkg_manager: str, **kwds
+    ctx: click.Context, renderer: Type[_Renderer], pkg_manager: str, **kwds
 ):
     """Function that does all of the work of `generate docker` and
     `generate singularity`. The difference between those two is the renderer used.
     """
     renderer_dict = _params_to_renderer_dict(ctx=ctx, pkg_manager=pkg_manager)
+
+    # Make sure to add default instructions if they are available among the templates
+    if "_default" in registered_templates():
+        # Add header to the instructions, after the base image.
+        renderer_dict["instructions"].insert(1, {"name": "_default", "kwds": {}})
+        # Use default entrypoint if user did not specify one.
+        instruction_names = [instr["name"] for instr in renderer_dict["instructions"]]
+        if "entrypoint" not in instruction_names:
+            renderer_dict["instructions"].append(
+                {"name": "entrypoint", "kwds": {"args": ["/neurodocker/startup.sh"]}}
+            )
+
     r = renderer.from_dict(renderer_dict)
 
     # Print the instructions in JSON if that's what the user wants.
@@ -469,14 +506,14 @@ def singularity(ctx: click.Context, pkg_manager: str, **kwds):
     type=click.File("r"),
     default=sys.stdin,
 )
-def genfromjson(*, container_type: str, input: ty.IO):
+def genfromjson(*, container_type: str, input: IO):
     """Generate a container from a ReproEnv JSON file.
 
     INPUT is standard input by default or a path to a JSON file.
     """
     d = json_lib.load(input)
 
-    renderer: ty.Type[_Renderer]
+    renderer: Type[_Renderer]
     if container_type.lower() == "docker":
         renderer = DockerRenderer
     elif container_type.lower() == "singularity":

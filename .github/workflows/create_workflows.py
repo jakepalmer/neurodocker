@@ -2,7 +2,7 @@
 This scripts uses a jinja template to create CI workflows to test.
 
     - different linux distributions (split by the package manager they use)
-    - different softwares that neurodocker supports
+    - different software that neurodocker supports
     - different install method for a given software
 
 All of those are defined in a python dictionary.
@@ -23,20 +23,20 @@ This requires for you to build the pages from the docs folder
 and on the branch where the workflows are pushed to (currently "test_docker_build").
 
 """
+
+import argparse
 from pathlib import Path
 
 import yaml  # type: ignore
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 apt_based = [
+    "ubuntu:24.04",
     "ubuntu:22.04",
-    "ubuntu:18.04",
-    "ubuntu:16.04",
+    "debian:bookworm-slim",
     "debian:bullseye-slim",
-    "debian:buster-slim",
-    "debian:stretch-slim",
 ]
-yum_based = ["fedora:36", "centos:7"]
+yum_based = ["fedora:40", "centos:8"]
 
 """
 Add a "skip_versions" key to the software dictionary if you want to skip
@@ -50,33 +50,6 @@ version 1.0.0 of afni, add the following to the software dictionary:
         },
 
 """
-softwares: dict[str, dict[str, list[str]]] = {
-    "afni": {
-        "methods": ["binaries", "source"],
-        "afni_python": ["true", "false"],
-    },
-    "ants": {
-        "methods": ["binaries", "source"],
-    },
-    "cat12": {"methods": ["binaries"]},
-    "convert3d": {"methods": ["binaries"]},
-    "dcm2niix": {
-        "methods": ["binaries", "source"],
-    },
-    "freesurfer": {"methods": []},
-    "fsl": {
-        "methods": ["binaries"],
-    },
-    "matlabmcr": {
-        "methods": ["binaries"],
-    },
-    "mricron": {"methods": ["binaries"]},
-    "mrtrix3": {
-        "methods": ["binaries", "source"],
-    },
-    "spm12": {"methods": ["binaries"]},
-}
-
 output_dir = Path(__file__).parent
 
 template_folder = Path(__file__).parents[2].joinpath("neurodocker", "templates")
@@ -90,6 +63,40 @@ branch = "test_docker_build"
 # Update to match your username and repo name if you are testing things on your fork
 # "ReproNim/neurodocker"
 repo = "ReproNim/neurodocker"
+
+
+def software() -> dict[str, dict[str, list[str]]]:
+    return {
+        "afni": {
+            "methods": ["binaries", "source"],
+            "afni_python": ["true", "false"],
+        },
+        "ants": {
+            "methods": ["binaries", "source"],
+        },
+        "bids_validator": {"methods": ["binaries"]},
+        "cat12": {"methods": ["binaries"]},
+        "convert3d": {"methods": ["binaries"]},
+        "dcm2niix": {
+            "methods": ["binaries", "source"],
+        },
+        "freesurfer": {"methods": []},
+        "fsl": {
+            "methods": ["binaries"],
+        },
+        "jq": {
+            "methods": ["binaries", "source"],
+        },
+        "matlabmcr": {
+            "methods": ["binaries"],
+        },
+        "mricron": {"methods": ["binaries"]},
+        "mrtrix3": {
+            "methods": ["binaries", "source"],
+        },
+        "spm12": {"methods": ["binaries"]},
+        "miniconda": {},
+    }
 
 
 def create_dashboard_file():
@@ -110,20 +117,20 @@ def create_dashboard_file():
         )
 
         # table of content
-        for software, _ in softwares.items():
-            print(f"""- [{software}](#{software})""", file=f)
+        for software_, _ in software().items():
+            print(f"""- [{software_}](#{software_})""", file=f)
 
         print("", file=f)
 
         # link to the github actions workflow and image of the build status
-        for software, _ in softwares.items():
-            image_url = f"{image_base_url}&only={software}"
+        for software_, _ in software().items():
+            image_url = f"{image_base_url}&only={software_}"
             print(
-                f"""## {software}
+                f"""## {software_}
 
-[{software} workflow](https://github.com/{repo}/actions/workflows/{software}.yml)
+[{software_} workflow](https://github.com/{repo}/actions/workflows/{software_}.yml)
 
-![{software} build status]({image_url})
+![{software_} build status]({image_url})
 """,
                 file=f,
             )
@@ -143,7 +150,7 @@ def stringify(some_list: list[str]) -> str:
     return "'" + "', '".join(some_list) + "'"
 
 
-def main():
+def main(software_name="all"):
     env = Environment(
         loader=FileSystemLoader(Path(__file__).parent),
         autoescape=select_autoescape(),
@@ -159,16 +166,23 @@ def main():
         "all": stringify(apt_based + yum_based),
     }
 
-    for software, spec in softwares.items():
+    # only keep relevant software
+    software_to_test = software()
+    if software_name in software_to_test:
+        software_to_test = {software_name: software_to_test[software_name]}
+
+    for software_, spec in software_to_test.items():
         wf = {
             "header": "# This is file is automatically generated. Do not edit.",
             "os": os,
-            "software": software,
+            "software": software_,
         }
 
-        versions = get_versions_from_neurodocker_template(software)
+        versions = get_versions_from_neurodocker_template(software_)
         for i in spec.get("skip_versions", []):
             versions.remove(i)
+        if software_ == "miniconda":
+            versions = ["latest"]
 
         if versions is not None and len(versions) > 0:
             wf["add_version"] = True
@@ -182,7 +196,7 @@ def main():
             wf["add_afni_python"] = True
             wf["afni_python"] = stringify(spec["afni_python"])
 
-        output_file = output_dir.joinpath(software).with_suffix(".yml")
+        output_file = output_dir.joinpath(software_).with_suffix(".yml")
         print("creating workflow")
         print(f"{output_file}")
         with open(output_file, "w") as f:
@@ -192,4 +206,18 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+
+    choices = list(software().keys())
+    choices.append("all")
+
+    parser.add_argument(
+        "--software_name",
+        required=False,
+        default="all",
+        choices=choices,
+        nargs=1,
+    )
+    args = parser.parse_args()
+
+    main(software_name=args.software_name[0])

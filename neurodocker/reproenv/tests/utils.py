@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import contextlib
 import getpass
 import os
-from pathlib import Path
 import subprocess
-import typing as ty
 import uuid
+from pathlib import Path
+from typing import Generator
 
 import pytest
 
@@ -22,7 +24,10 @@ def _docker_available():
     """Return `True` if docker-py is installed or docker engine is available."""
     if docker is None:
         return False
-    client = docker.from_env()
+    try:
+        client = docker.from_env()
+    except docker.errors.DockerException:
+        return False
     try:
         return client.ping()  # bool, unless engine is unresponsive (eg not installed)
     except docker.errors.APIError:
@@ -49,7 +54,7 @@ skip_if_no_singularity = pytest.mark.skipif(
 
 
 @contextlib.contextmanager
-def build_docker_image(context: Path, remove=False) -> ty.Generator[str, None, None]:
+def build_docker_image(context: Path, remove=False) -> Generator[str, None, None]:
     """Context manager that builds a Docker image and removes it on exit.
 
     The argument `remove` is `False` by default because we clean up all images at the
@@ -64,7 +69,7 @@ def build_docker_image(context: Path, remove=False) -> ty.Generator[str, None, N
     if not df.exists():
         raise FileNotFoundError(f"Dockerfile not found: {df}")
     tag = "reproenv-pytest-" + uuid.uuid4().hex
-    cmd: ty.List[str] = ["docker", "build", "--tag", tag, str(context)]
+    cmd: list[str] = ["docker", "build", "--tag", tag, str(context)]
     try:
         _ = subprocess.check_output(cmd, cwd=context)
         yield tag
@@ -80,9 +85,7 @@ def build_docker_image(context: Path, remove=False) -> ty.Generator[str, None, N
 
 
 @contextlib.contextmanager
-def build_singularity_image(
-    context: Path, remove=True
-) -> ty.Generator[str, None, None]:
+def build_singularity_image(context: Path, remove=True) -> Generator[str, None, None]:
     """Context manager that builds a Apptainer image and removes it on exit.
 
     If `sudo singularity` is not available, the full path to `apptainer` can be set
@@ -101,16 +104,19 @@ def build_singularity_image(
     user = getpass.getuser()
     cachedir = Path("/") / "dev" / "shm" / user / "apptainer"
     singularity = os.environ.get("REPROENV_APPTAINER_PROGRAM", "apptainer")
-    cmd: ty.List[str] = [
-        "sudo",
-        f"APPTAINER_CACHEDIR={cachedir}",
+    cmd: list[str] = [
         singularity,
         "build",
+        "--fakeroot",
         str(sif),
         str(recipe),
     ]
+    env: dict[str, str] = {
+        "APPTAINER_CACHEDIR": cachedir,
+        "PATH": os.environ.get("PATH"),
+    }
     try:
-        _ = subprocess.check_output(cmd, cwd=context)
+        _ = subprocess.check_output(cmd, env=env, cwd=context)
         yield str(sif)
     finally:
         if remove:
@@ -120,9 +126,7 @@ def build_singularity_image(
                 pass
 
 
-def run_docker_image(
-    img: str, args: ty.List[str] = None, entrypoint: ty.List[str] = None
-):
+def run_docker_image(img: str, args: list[str] = None, entrypoint: list[str] = None):
     """Wrapper for `docker run`.
 
     Returns
@@ -144,7 +148,7 @@ def run_docker_image(
 
 
 def run_singularity_image(
-    img: str, args: ty.List[str] = None, entrypoint: ty.List[str] = None
+    img: str, args: list[str] = None, entrypoint: list[str] = None
 ):
     """Wrapper for `singularity run` or `singularity exec`.
 
@@ -155,7 +159,8 @@ def run_singularity_image(
     """
     scmd = "run" if entrypoint is None else "exec"
     # sudo not required
-    cmd: ty.List[str] = ["singularity", scmd, "--cleanenv", img]
+    singularity = os.environ.get("REPROENV_APPTAINER_PROGRAM", "apptainer")
+    cmd: list[str] = [singularity, scmd, "--cleanenv", img]
     if entrypoint is not None:
         cmd.extend(entrypoint)
     if args is not None:

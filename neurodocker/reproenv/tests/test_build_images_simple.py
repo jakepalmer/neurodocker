@@ -1,10 +1,11 @@
 import pytest
 
-from neurodocker.reproenv.renderers import DockerRenderer
-from neurodocker.reproenv.renderers import SingularityRenderer
-from neurodocker.reproenv.tests.utils import get_build_and_run_fns
-from neurodocker.reproenv.tests.utils import skip_if_no_docker
-from neurodocker.reproenv.tests.utils import skip_if_no_singularity
+from neurodocker.reproenv.renderers import DockerRenderer, SingularityRenderer
+from neurodocker.reproenv.tests.utils import (
+    get_build_and_run_fns,
+    skip_if_no_docker,
+    skip_if_no_singularity,
+)
 
 
 @pytest.mark.parametrize(
@@ -20,9 +21,9 @@ def test_build_simple(cmd: str, tmp_path):
     # Create a Dockerfile.
     r = rcls("apt")
     if isinstance(r, DockerRenderer):
-        r.from_("debian:buster-slim", as_="builder")
+        r.from_("debian:bullseye-slim", as_="builder")
     else:
-        r.from_("debian:buster-slim")
+        r.from_("debian:bullseye-slim")
     r.arg("FOO")
     r.copy(["foo.txt", "tst/baz.txt"], "/opt/")
     r.env(PATH="$PATH:/opt/foo/bin")

@@ -11,6 +11,7 @@ def test_singularity_renderer_add_template():
 
     d = {
         "name": "foobar",
+        "url": "some-url",
         "binaries": {
             "urls": {"1.0.0": "foobar"},
             "env": {"foo": "bar"},
@@ -59,6 +60,7 @@ echo hello Bjork"""
 
     d = {
         "name": "baz",
+        "url": "some-url",
         "binaries": {
             "urls": {"1.0.0": "foobar"},
             "env": {"foo": "bar"},
@@ -321,7 +323,7 @@ ORG BAZ"""
     )
 
     s = SingularityRenderer("apt")
-    s.from_("debian:buster-slim")
+    s.from_("debian:bullseye-slim")
     s.entrypoint(["echo", "foobar baz"])
     rendered = str(s)
     rendered = prune_rendered(rendered).strip()
@@ -329,7 +331,7 @@ ORG BAZ"""
         rendered
         == """\
 Bootstrap: docker
-From: debian:buster-slim
+From: debian:bullseye-slim
 
 %post
 
